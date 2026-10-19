@@ -1,0 +1,51 @@
+SELECT
+  COUNT(*) AS total_events,
+  COUNT(DISTINCT patient_id) AS patients,
+  COUNT(DISTINCT activity) AS activities,
+  MIN(timestamp) AS first_event,
+  MAX(timestamp) AS last_event,
+  COUNTIF(patient_id IS NULL OR activity IS NULL OR timestamp IS NULL) AS bad_rows
+FROM `project-41133dfe-d846-438e-ad2.1.raw_ehr_events`;
+
+
+SELECT
+  activity,
+  COUNT(*) AS events,
+  COUNT(DISTINCT patient_id) AS patients
+FROM `project-41133dfe-d846-438e-ad2.1.raw_ehr_events`
+GROUP BY activity
+ORDER BY events DESC;
+
+CREATE OR REPLACE VIEW `project-41133dfe-d846-438e-ad2.1.stg_ehr_events` AS
+SELECT DISTINCT
+  patient_id, TRIM(activity) AS activity, timestamp,
+  doctor_id, age_group, gender, department
+FROM `project-41133dfe-d846-438e-ad2.1.raw_ehr_events`
+WHERE patient_id IS NOT NULL AND activity IS NOT NULL AND timestamp IS NOT NULL;
+
+WITH paths AS (
+  SELECT patient_id,
+         STRING_AGG(activity, ' > ' ORDER BY timestamp) AS path
+  FROM `project-41133dfe-d846-438e-ad2.1.stg_ehr_events`
+  GROUP BY patient_id
+)
+SELECT path, COUNT(*) AS patients
+FROM paths
+GROUP BY path
+ORDER BY patients DESC
+LIMIT 10;
+
+WITH steps AS (
+  SELECT activity, timestamp,
+    LEAD(activity) OVER (PARTITION BY patient_id ORDER BY timestamp) AS next_activity,
+    LEAD(timestamp) OVER (PARTITION BY patient_id ORDER BY timestamp) AS next_ts
+  FROM `project-41133dfe-d846-438e-ad2.1.stg_ehr_events`
+)
+SELECT activity, next_activity,
+  COUNT(*) AS transitions,
+  ROUND(AVG(TIMESTAMP_DIFF(next_ts, timestamp, MINUTE)), 1) AS avg_minutes
+FROM steps
+WHERE next_activity IS NOT NULL
+GROUP BY activity, next_activity
+ORDER BY avg_minutes DESC
+LIMIT 15;
